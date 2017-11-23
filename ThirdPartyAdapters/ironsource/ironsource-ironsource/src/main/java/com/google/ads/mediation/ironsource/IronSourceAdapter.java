@@ -10,8 +10,8 @@ import android.util.Log;
 
 import com.google.android.gms.ads.AdRequest;
 import com.google.android.gms.ads.mediation.MediationAdRequest;
-import com.google.android.gms.ads.mediation.MediationInterstitialAdapter;
-import com.google.android.gms.ads.mediation.MediationInterstitialListener;
+import com.google.android.gms.ads.mediation.customevent.CustomEventInterstitial;
+import com.google.android.gms.ads.mediation.customevent.CustomEventInterstitialListener;
 import com.google.android.gms.ads.reward.mediation.MediationRewardedVideoAdAdapter;
 import com.google.android.gms.ads.reward.mediation.MediationRewardedVideoAdListener;
 import com.google.android.gms.common.GoogleApiAvailability;
@@ -22,7 +22,10 @@ import com.ironsource.mediationsdk.model.Placement;
 import com.ironsource.mediationsdk.sdk.InterstitialListener;
 import com.ironsource.mediationsdk.sdk.RewardedVideoListener;
 
-public class IronSourceAdapter implements MediationInterstitialAdapter, MediationRewardedVideoAdAdapter,
+import org.json.JSONException;
+import org.json.JSONObject;
+
+public class IronSourceAdapter implements CustomEventInterstitial, MediationRewardedVideoAdAdapter,
         RewardedVideoListener, InterstitialListener {
 
     /**
@@ -95,13 +98,14 @@ public class IronSourceAdapter implements MediationInterstitialAdapter, Mediatio
      * Mediation interstitial ad listener used to forward interstitial events from
      * IronSource SDK to Google Mobile Ads SDK.
      */
-    private MediationInterstitialListener mInterstitialListener;
+    private CustomEventInterstitialListener mInterstitialListener;
 
     /**
      * Private IronSource methods
      */
 
-    private synchronized void initIronSourceSDK(Context context, Bundle serverParameters, IronSource.AD_UNIT adUnit) {
+    private synchronized void initIronSourceSDK(Context context, String appKey, boolean isTestEnabled, IronSource.AD_UNIT adUnit) {
+//    private synchronized void initIronSourceSDK(Context context, Bundle serverParameters, IronSource.AD_UNIT adUnit) {
         // 1 - We are not sending user ID from adapters anymore,
         //     the IronSource SDK will take care of this identifier
 
@@ -125,9 +129,10 @@ public class IronSourceAdapter implements MediationInterstitialAdapter, Mediatio
         }
 
         try {
-            mIsTestEnabled = serverParameters.getBoolean(KEY_TEST_MODE, false);
+//            mIsTestEnabled = serverParameters.getBoolean(KEY_TEST_MODE, false);
+            mIsTestEnabled = isTestEnabled;
 
-            String appKey = serverParameters.getString(KEY_APP_KEY);
+//            String appKey = serverParameters.getString(KEY_APP_KEY);
 
             onLog("Server params | appKey: " + appKey + " | isTestEnabled: " + mIsTestEnabled + " | placementName: " + mRewardedVideoPlacementName);
 
@@ -210,7 +215,8 @@ public class IronSourceAdapter implements MediationInterstitialAdapter, Mediatio
             sendEventOnUIThread(new Runnable() {
                 public void run() {
                     onLog("onISAdFailedToLoad:" + errorCode);
-                    mInterstitialListener.onAdFailedToLoad(IronSourceAdapter.this, errorCode);
+//                    mInterstitialListener.onAdFailedToLoad(IronSourceAdapter.this, errorCode);
+                    mInterstitialListener.onAdFailedToLoad(errorCode);
                 }
             });
         }
@@ -220,7 +226,7 @@ public class IronSourceAdapter implements MediationInterstitialAdapter, Mediatio
      * MediationInterstitialAdapter implementation
      */
 
-    @Override
+   /* @Override
     public void requestInterstitialAd(Context context,
                                       MediationInterstitialListener listener,
                                       Bundle serverParameters,
@@ -234,6 +240,27 @@ public class IronSourceAdapter implements MediationInterstitialAdapter, Mediatio
 
         initIronSourceSDK(context, serverParameters, IronSource.AD_UNIT.INTERSTITIAL);
         loadISIronSourceSDK();
+    }*/
+    @Override
+    public void requestInterstitialAd(Context context,
+                                      CustomEventInterstitialListener customEventInterstitialListener,
+                                      String serverParameters,
+                                      MediationAdRequest mediationAdRequest,
+                                      Bundle bundle) {
+        onLog("requestInterstitialAd");
+        mInterstitialListener = customEventInterstitialListener;
+        IronSource.setInterstitialListener(this);
+
+        try {
+            JSONObject obj = new JSONObject(serverParameters);
+            mInterstitialPlacementName = obj.optString(KEY_IS_PLACEMENT, "");
+
+            initIronSourceSDK(context, obj.optString(KEY_APP_KEY), obj.optBoolean(KEY_TEST_MODE, false),
+                    IronSource.AD_UNIT.INTERSTITIAL);
+            loadISIronSourceSDK();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
     @Override
@@ -265,9 +292,31 @@ public class IronSourceAdapter implements MediationInterstitialAdapter, Mediatio
         mMediationRewardedVideoAdListener = mediationRewardedVideoAdListener;
         IronSource.setRewardedVideoListener(this);
 
-        mRewardedVideoPlacementName = serverParameters.getString(KEY_RV_PLACEMENT, "");
+        String jsonParameter = serverParameters.getString(CUSTOM_EVENT_SERVER_PARAMETER_FIELD);
 
-        initIronSourceSDK(context, serverParameters, IronSource.AD_UNIT.REWARDED_VIDEO);
+        try {
+            JSONObject object = new JSONObject(jsonParameter);
+            boolean isTestEnabled = object.optBoolean(KEY_TEST_MODE, false);
+            mRewardedVideoPlacementName = object.optString(KEY_RV_PLACEMENT, "");
+
+            onLog("Server params: " + jsonParameter);
+
+            String applicationKey = object.optString("applicationKey");
+            if (TextUtils.isEmpty(applicationKey)) {
+                applicationKey = object.optString(KEY_APP_KEY);
+            }
+
+            if (!TextUtils.isEmpty(applicationKey)) {
+                initIronSourceSDK(context, applicationKey, isTestEnabled,
+                        IronSource.AD_UNIT.REWARDED_VIDEO);
+            } else {
+                onLog("onInitializationFailed");
+                mMediationRewardedVideoAdListener.onInitializationFailed(IronSourceAdapter.this, AdRequest.ERROR_CODE_INVALID_REQUEST);
+            }
+        } catch (JSONException e) {
+            onLog("onInitializationFailed");
+            mMediationRewardedVideoAdListener.onInitializationFailed(IronSourceAdapter.this, AdRequest.ERROR_CODE_INVALID_REQUEST);
+        }
     }
 
     @Override
@@ -322,7 +371,7 @@ public class IronSourceAdapter implements MediationInterstitialAdapter, Mediatio
             sendEventOnUIThread(new Runnable() {
                 public void run() {
                     onLog("onAdLoaded");
-                    mInterstitialListener.onAdLoaded(IronSourceAdapter.this);
+                    mInterstitialListener.onAdLoaded();
                 }
             });
         }
@@ -339,7 +388,7 @@ public class IronSourceAdapter implements MediationInterstitialAdapter, Mediatio
             sendEventOnUIThread(new Runnable() {
                 public void run() {
                     onLog("onAdOpened");
-                    mInterstitialListener.onAdOpened(IronSourceAdapter.this);
+                    mInterstitialListener.onAdOpened();
                 }
             });
         }
@@ -351,7 +400,7 @@ public class IronSourceAdapter implements MediationInterstitialAdapter, Mediatio
             sendEventOnUIThread(new Runnable() {
                 public void run() {
                     onLog("onAdClosed");
-                    mInterstitialListener.onAdClosed(IronSourceAdapter.this);
+                    mInterstitialListener.onAdClosed();
                 }
             });
         }
@@ -373,9 +422,9 @@ public class IronSourceAdapter implements MediationInterstitialAdapter, Mediatio
             sendEventOnUIThread(new Runnable() {
                 public void run() {
                     onLog("onAdClicked");
-                    mInterstitialListener.onAdClicked(IronSourceAdapter.this);
+                    mInterstitialListener.onAdClicked();
                     onLog("onAdLeftApplication");
-                    mInterstitialListener.onAdLeftApplication(IronSourceAdapter.this);
+                    mInterstitialListener.onAdLeftApplication();
                 }
             });
         }
